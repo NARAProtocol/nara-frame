@@ -1,512 +1,103 @@
-import { ImageResponse } from 'next/og'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 export const runtime = 'edge'
 
-// Slot tier data — fixed layout for the 10x10 founding grid
 const SLOT_NARA = [
-  // Row 1
   50, 100, 250, 500, 1000, 50, 500, 100, 500, 250,
-  // Row 2
   500, 250, 100, 250, 250, 100, 50, 50, 250, 100,
-  // Row 3
   500, 100, 1000, 50, 1000, 50, 250, 500, 500, 50,
-  // Rows 4–10: deterministic fill from tier cycle
-  ...Array.from({ length: 70 }, (_, j) => {
-    const tiers = [50, 100, 250, 500, 1000]
-    return tiers[(j + 3) % 5]
-  }),
+  ...Array.from({ length: 70 }, (_, j) => [50, 100, 250, 500, 1000][(j + 3) % 5]),
 ]
 
-interface Slot {
-  id: number
-  nara: number
-  taken: boolean
-}
+const TAKEN = [false, false, true, ...Array(97).fill(false)] // slot #3 taken
 
-const SLOTS: Slot[] = SLOT_NARA.map((nara, i) => ({
-  id: i + 1,
-  nara,
-  taken: i === 2, // slot #3 (index 2) is taken
-}))
-
-// Tier colors — border/accent color when a slot is taken
-function tierColor(nara: number): string {
-  switch (nara) {
-    case 50:
-      return '#71717a'
-    case 100:
-      return '#3b82f6'
-    case 250:
-      return '#8b5cf6'
-    case 500:
-      return '#f59e0b'
-    case 1000:
-      return '#ef4444'
-    default:
-      return '#3f3f46'
-  }
-}
-
-function formatNara(n: number): string {
-  return n >= 1000 ? `${n / 1000}k` : `${n}`
-}
-
-const TAKEN_COUNT = SLOTS.filter((s) => s.taken).length
+const SLOTS = SLOT_NARA.map((nara, i) => ({ id: i + 1, nara, taken: TAKEN[i] }))
+const TAKEN_COUNT = SLOTS.filter(s => s.taken).length
 const OPEN_COUNT = 100 - TAKEN_COUNT
 
+function tierColor(nara: number): string {
+  if (nara === 50)   return '#71717a'
+  if (nara === 100)  return '#3b82f6'
+  if (nara === 250)  return '#8b5cf6'
+  if (nara === 500)  return '#f59e0b'
+  if (nara === 1000) return '#ef4444'
+  return '#3f3f46'
+}
+
+function fmt(n: number): string { return n >= 1000 ? `${n / 1000}k` : `${n}` }
+
 export async function GET(req: NextRequest) {
-  // Cell dimensions — 10 columns, 10 rows in 1200x630
-  // Reserve top ~100px for header, bottom ~40px for footer
-  // Side panel ~140px on right
-  // Grid area: (1200 - 140 - 32) x (630 - 100 - 40 - 32) = 1028 x 458
-  // Cell: floor((1028 - 9*4) / 10) = floor(992/10) = 99 wide
-  //       floor((458 - 9*4) / 10) = floor(422/10) = 42 tall
-
-  const GRID_X = 16
-  const GRID_Y = 100
-  const PANEL_W = 148
-  const CELL_W = 95
-  const CELL_H = 42
+  const W = 1200, H = 630
+  const HEADER_H = 72
+  const FOOTER_H = 36
+  const PANEL_W = 160
+  const PADDING = 12
+  const GRID_X = PADDING
+  const GRID_Y = HEADER_H + PADDING
+  const GRID_W = W - PANEL_W - PADDING * 3
+  const GRID_H = H - HEADER_H - FOOTER_H - PADDING * 2
+  const CELL_W = Math.floor((GRID_W - 9 * 4) / 10)
+  const CELL_H = Math.floor((GRID_H - 9 * 4) / 10)
   const GAP = 4
+  const PX = W - PANEL_W - PADDING
+  const PY = HEADER_H + PADDING
 
-  return new ImageResponse(
-    (
-      <div
-        style={{
-          width: 1200,
-          height: 630,
-          background: '#0a0a0a',
-          display: 'flex',
-          flexDirection: 'column',
-          fontFamily: '"Inter", monospace',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            padding: '20px 16px 12px 16px',
-            borderBottom: '1px solid #27272a',
-          }}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span
-              style={{
-                fontFamily: 'monospace',
-                fontSize: 26,
-                fontWeight: 700,
-                color: '#ffffff',
-                letterSpacing: '-0.01em',
-              }}
-            >
-              NARA DEGEN BOARD
-            </span>
-            <span
-              style={{
-                fontFamily: 'monospace',
-                fontSize: 13,
-                color: '#71717a',
-                letterSpacing: '0.02em',
-              }}
-            >
-              100 founding degens · one tile each · lock supply, earn NARA + ETH
-            </span>
-          </div>
+  const cells = SLOTS.map((slot, i) => {
+    const col = i % 10
+    const row = Math.floor(i / 10)
+    const x = GRID_X + col * (CELL_W + GAP)
+    const y = GRID_Y + row * (CELL_H + GAP)
+    const border = slot.taken ? tierColor(slot.nara) : '#3f3f46'
+    const bg = slot.taken ? '#0f0f0f' : '#18181b'
+    const numColor = slot.taken ? tierColor(slot.nara) : '#52525b'
+    const naraColor = slot.taken ? '#a1a1aa' : '#3f3f46'
+    const idStr = String(slot.id).padStart(2, '0')
+    return `<rect x="${x}" y="${y}" width="${CELL_W}" height="${CELL_H}" rx="3" fill="${bg}" stroke="${border}" stroke-width="1"/>
+<text x="${x+5}" y="${y+13}" font-family="monospace" font-size="10" fill="${numColor}" font-weight="${slot.taken?600:400}">${idStr}</text>
+<text x="${x+5}" y="${y+CELL_H-5}" font-family="monospace" font-size="10" fill="${naraColor}">${fmt(slot.nara)}</text>
+${slot.taken ? `<text x="${x+CELL_W-12}" y="${y+CELL_H-5}" font-family="monospace" font-size="9" fill="${border}">&#9635;</text>` : ''}`
+  }).join('\n')
 
-          {/* Live badge */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 10px',
-              border: '1px solid #27272a',
-              borderRadius: 4,
-            }}
-          >
-            <div
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: '#22c55e',
-              }}
-            />
-            <span
-              style={{
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: '#a1a1aa',
-                letterSpacing: '0.08em',
-              }}
-            >
-              EPOCH 776+
-            </span>
-          </div>
-        </div>
+  const tierLegend = [[50,'#71717a'],[100,'#3b82f6'],[250,'#8b5cf6'],[500,'#f59e0b'],[1000,'#ef4444']] as [number,string][]
 
-        {/* Body: grid + side panel */}
-        <div
-          style={{
-            display: 'flex',
-            flex: 1,
-            padding: '12px 16px',
-            gap: 16,
-          }}
-        >
-          {/* 10x10 Grid */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: `${GAP}px`,
-              flex: 1,
-            }}
-          >
-            {Array.from({ length: 10 }, (_, row) => (
-              <div
-                key={row}
-                style={{
-                  display: 'flex',
-                  gap: `${GAP}px`,
-                  flex: 1,
-                }}
-              >
-                {SLOTS.slice(row * 10, row * 10 + 10).map((slot) => {
-                  const color = slot.taken ? tierColor(slot.nara) : '#3f3f46'
-                  const bgColor = slot.taken ? '#0f0f0f' : '#18181b'
-                  const numColor = slot.taken ? tierColor(slot.nara) : '#52525b'
-                  const naraColor = slot.taken ? '#a1a1aa' : '#3f3f46'
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${W}" height="${H}" fill="#0a0a0a"/>
+  <line x1="0" y1="${HEADER_H}" x2="${W}" y2="${HEADER_H}" stroke="#27272a" stroke-width="1"/>
+  <text x="${PADDING}" y="38" font-family="monospace" font-size="26" font-weight="700" fill="#ffffff">NARA DEGEN BOARD</text>
+  <text x="${PADDING}" y="58" font-family="monospace" font-size="12" fill="#71717a">100 founding degens · one tile each · lock supply, earn NARA + ETH</text>
+  <rect x="${W-130}" y="18" width="118" height="24" rx="4" fill="#0a0a0a" stroke="#27272a" stroke-width="1"/>
+  <circle cx="${W-116}" cy="30" r="4" fill="#22c55e"/>
+  <text x="${W-108}" y="34" font-family="monospace" font-size="11" fill="#a1a1aa">EPOCH 776+</text>
+  ${cells}
+  <rect x="${PX}" y="${PY}" width="${PANEL_W}" height="80" rx="4" fill="#0a0a0a" stroke="#27272a" stroke-width="1"/>
+  <text x="${PX+10}" y="${PY+18}" font-family="monospace" font-size="10" fill="#52525b">OG TILES</text>
+  <text x="${PX+10}" y="${PY+48}" font-family="monospace" font-size="28" font-weight="700" fill="#ffffff">${TAKEN_COUNT}</text>
+  <text x="${PX+36}" y="${PY+48}" font-family="monospace" font-size="14" fill="#52525b">/ 100</text>
+  <text x="${PX+10}" y="${PY+68}" font-family="monospace" font-size="10" fill="#71717a">CLAIMED</text>
+  <rect x="${PX}" y="${PY+88}" width="${PANEL_W}" height="80" rx="4" fill="#0f0b02" stroke="#f59e0b" stroke-width="1"/>
+  <text x="${PX+10}" y="${PY+106}" font-family="monospace" font-size="10" fill="#92400e">SLOTS OPEN</text>
+  <text x="${PX+10}" y="${PY+136}" font-family="monospace" font-size="28" font-weight="700" fill="#f59e0b">${OPEN_COUNT}</text>
+  <text x="${PX+10}" y="${PY+156}" font-family="monospace" font-size="10" fill="#92400e">REMAINING</text>
+  <rect x="${PX}" y="${PY+176}" width="${PANEL_W}" height="76" rx="4" fill="#0a0a0a" stroke="#27272a" stroke-width="1"/>
+  <text x="${PX+10}" y="${PY+194}" font-family="monospace" font-size="10" fill="#52525b">EARN</text>
+  <text x="${PX+10}" y="${PY+216}" font-family="monospace" font-size="12" fill="#f59e0b">+</text>
+  <text x="${PX+22}" y="${PY+216}" font-family="monospace" font-size="12" fill="#a1a1aa">NARA drip</text>
+  <text x="${PX+10}" y="${PY+234}" font-family="monospace" font-size="12" fill="#3b82f6">+</text>
+  <text x="${PX+22}" y="${PY+234}" font-family="monospace" font-size="12" fill="#a1a1aa">ETH fees</text>
+  <text x="${PX+10}" y="${PY+246}" font-family="monospace" font-size="9" fill="#52525b">every 15min epoch</text>
+  <rect x="${PX}" y="${PY+260}" width="${PANEL_W}" height="100" rx="4" fill="#0a0a0a" stroke="#27272a" stroke-width="1"/>
+  <text x="${PX+10}" y="${PY+278}" font-family="monospace" font-size="10" fill="#52525b">TIERS</text>
+  ${tierLegend.map(([n,c],i) => `<rect x="${PX+10}" y="${PY+286+i*16}" width="8" height="8" rx="1" fill="${c}"/><text x="${PX+24}" y="${PY+294+i*16}" font-family="monospace" font-size="10" fill="#71717a">${fmt(n)} NARA</text>`).join('\n  ')}
+  <line x1="0" y1="${H-FOOTER_H}" x2="${W}" y2="${H-FOOTER_H}" stroke="#1c1c1e" stroke-width="1"/>
+  <text x="${PADDING}" y="${H-12}" font-family="monospace" font-size="11" fill="#52525b">${TAKEN_COUNT} / 100 OG tiles claimed · 700k sealed reserve · epoch every 15min</text>
+  <text x="${W-184}" y="${H-12}" font-family="monospace" font-size="11" fill="#71717a">naraprotocol.io/mine</text>
+</svg>`
 
-                  return (
-                    <div
-                      key={slot.id}
-                      style={{
-                        flex: 1,
-                        border: `1px solid ${color}`,
-                        background: bgColor,
-                        borderRadius: 3,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        padding: '3px 5px',
-                        position: 'relative',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {/* Slot number */}
-                      <span
-                        style={{
-                          fontFamily: 'monospace',
-                          fontSize: 10,
-                          color: numColor,
-                          fontWeight: slot.taken ? 600 : 400,
-                          lineHeight: 1,
-                        }}
-                      >
-                        {String(slot.id).padStart(2, '0')}
-                      </span>
-
-                      {/* NARA amount + lock indicator */}
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            color: naraColor,
-                            lineHeight: 1,
-                          }}
-                        >
-                          {formatNara(slot.nara)}
-                        </span>
-                        {slot.taken && (
-                          <span
-                            style={{
-                              fontSize: 9,
-                              color: tierColor(slot.nara),
-                              lineHeight: 1,
-                            }}
-                          >
-                            ▣
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
-
-          {/* Side panel */}
-          <div
-            style={{
-              width: PANEL_W,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
-            {/* Stat block: claimed */}
-            <div
-              style={{
-                border: '1px solid #27272a',
-                borderRadius: 4,
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 2,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#52525b',
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                OG TILES
-              </span>
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 22,
-                  fontWeight: 700,
-                  color: '#ffffff',
-                  lineHeight: 1,
-                }}
-              >
-                {TAKEN_COUNT}
-                <span style={{ fontSize: 13, color: '#52525b', fontWeight: 400 }}>
-                  {' '}/ 100
-                </span>
-              </span>
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#71717a',
-                }}
-              >
-                CLAIMED
-              </span>
-            </div>
-
-            {/* Stat block: open */}
-            <div
-              style={{
-                border: '1px solid #f59e0b',
-                borderRadius: 4,
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 2,
-                background: '#0f0b02',
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#92400e',
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                SLOTS OPEN
-              </span>
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 22,
-                  fontWeight: 700,
-                  color: '#f59e0b',
-                  lineHeight: 1,
-                }}
-              >
-                {OPEN_COUNT}
-              </span>
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#92400e',
-                }}
-              >
-                REMAINING
-              </span>
-            </div>
-
-            {/* Stat block: reward info */}
-            <div
-              style={{
-                border: '1px solid #27272a',
-                borderRadius: 4,
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#52525b',
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                EARN
-              </span>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <span
-                  style={{
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: '#a1a1aa',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span style={{ color: '#f59e0b' }}>+</span> NARA drip
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: '#a1a1aa',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span style={{ color: '#3b82f6' }}>+</span> ETH fees
-                </span>
-              </div>
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 9,
-                  color: '#52525b',
-                  lineHeight: 1.4,
-                }}
-              >
-                every 15min epoch
-              </span>
-            </div>
-
-            {/* Tier legend */}
-            <div
-              style={{
-                border: '1px solid #27272a',
-                borderRadius: 4,
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 5,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: '#52525b',
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  marginBottom: 2,
-                }}
-              >
-                TIERS
-              </span>
-              {([
-                [50, '#71717a'],
-                [100, '#3b82f6'],
-                [250, '#8b5cf6'],
-                [500, '#f59e0b'],
-                [1000, '#ef4444'],
-              ] as [number, string][]).map(([n, c]) => (
-                <div
-                  key={n}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 1,
-                      background: c,
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontFamily: 'monospace',
-                      fontSize: 10,
-                      color: '#71717a',
-                    }}
-                  >
-                    {formatNara(n)} NARA
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '8px 16px',
-            borderTop: '1px solid #1c1c1e',
-          }}
-        >
-          <span
-            style={{
-              fontFamily: 'monospace',
-              fontSize: 11,
-              color: '#52525b',
-              letterSpacing: '0.02em',
-            }}
-          >
-            {TAKEN_COUNT} / 100 OG tiles claimed · 700k sealed reserve · epoch every 15min
-          </span>
-          <span
-            style={{
-              fontFamily: 'monospace',
-              fontSize: 11,
-              color: '#71717a',
-              letterSpacing: '0.02em',
-            }}
-          >
-            naraprotocol.io/mine
-          </span>
-        </div>
-      </div>
-    ),
-    {
-      width: 1200,
-      height: 630,
-    }
-  )
+  return new NextResponse(svg, {
+    headers: {
+      'Content-Type': 'image/svg+xml',
+      'Cache-Control': 'public, max-age=300',
+    },
+  })
 }
